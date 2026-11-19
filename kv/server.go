@@ -63,6 +63,9 @@ func (s *Server) Stop() {
 // Raft exposes the underlying node (used to register the Raft gRPC service).
 func (s *Server) Raft() *raft.Node { return s.rf }
 
+// Snapshot returns a copy of this server's state machine (for test invariants).
+func (s *Server) Snapshot() map[string]string { return s.store.Snapshot() }
+
 // --- client RPCs ---
 
 func (s *Server) Put(ctx context.Context, req *kvpb.PutRequest) (*kvpb.PutResponse, error) {

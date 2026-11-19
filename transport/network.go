@@ -66,6 +66,15 @@ func (nw *Network) RemoveHandler(id string) {
 func (nw *Network) Disconnect(id string) { nw.setConnected(id, false) }
 func (nw *Network) Connect(id string)    { nw.setConnected(id, true) }
 
+// IsConnected reports whether a node currently has its links up. An observer in
+// the majority cannot see a partitioned-away node, so tests use this to ignore
+// a stale leader isolated in a minority.
+func (nw *Network) IsConnected(id string) bool {
+	nw.mu.Lock()
+	defer nw.mu.Unlock()
+	return nw.connected[id]
+}
+
 func (nw *Network) setConnected(id string, v bool) {
 	nw.mu.Lock()
 	defer nw.mu.Unlock()

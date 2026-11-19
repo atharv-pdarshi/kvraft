@@ -24,6 +24,11 @@ func (c *Cluster) CheckOneLeader() string {
 		c.mu.Unlock()
 
 		for id, n := range nodes {
+			// Ignore nodes an observer cannot reach: a leader isolated in a
+			// minority still believes it leads its old term.
+			if !c.net.IsConnected(id) {
+				continue
+			}
 			if term, isLeader := n.State(); isLeader {
 				leadersByTerm[term] = append(leadersByTerm[term], id)
 			}
@@ -71,6 +76,9 @@ func (c *Cluster) Leader() (string, *raft.Node, bool) {
 	var bestTerm uint64
 	found := false
 	for id, n := range c.nodes {
+		if !c.net.IsConnected(id) {
+			continue
+		}
 		if term, isLeader := n.State(); isLeader && (!found || term >= bestTerm) {
 			found, bestID, best, bestTerm = true, id, n, term
 		}

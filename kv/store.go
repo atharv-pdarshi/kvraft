@@ -67,6 +67,18 @@ func (s *Store) Len() int {
 	return len(s.data)
 }
 
+// Snapshot returns a copy of the whole map, used by tests to check that every
+// replica's state machine converged.
+func (s *Store) Snapshot() map[string]string {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	out := make(map[string]string, len(s.data))
+	for k, v := range s.data {
+		out[k] = v
+	}
+	return out
+}
+
 // EncodeCommand serializes a Command into the bytes carried by the Raft log.
 func EncodeCommand(cmd *kvpb.Command) ([]byte, error) {
 	return proto.Marshal(cmd)

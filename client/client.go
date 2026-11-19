@@ -29,11 +29,15 @@ type Client struct {
 	endpoints map[string]Endpoint
 	ids       []string
 
-	mu     sync.Mutex
-	leader string // last known leader id ("" if unknown)
-	seq    uint64
-	rng    *rand.Rand
+	mu      sync.Mutex
+	leader  string // last known leader id ("" if unknown)
+	seq     uint64
+	rng     *rand.Rand
+	history *History // optional recorder
 }
+
+// SetHistory attaches a recorder that logs every completed operation.
+func (c *Client) SetHistory(h *History) { c.history = h }
 
 // New builds a client over the given endpoints. clientID must be unique per
 // client so the server can deduplicate that client's retries.
@@ -85,7 +89,9 @@ func (c *Client) clearLeader() {
 
 // Put stores a value, retrying through leader changes until it succeeds or ctx
 // is cancelled.
-func (c *Client) Put(ctx context.Context, key, value string) error {
+func (c *Client) Put(ctx context.Context, key, value string) (err error) {
+	start := time.Now()
+	defer func() { c.record(Event{Op: "put", Key: key, Value: value, OK: err == nil, Start: start, End: time.Now(), Err: err}) }()
 	seq := c.nextSeq()
 	for {
 		if err := ctx.Err(); err != nil {
@@ -113,7 +119,9 @@ func (c *Client) Put(ctx context.Context, key, value string) error {
 }
 
 // Delete removes a key, with the same retry behaviour as Put.
-func (c *Client) Delete(ctx context.Context, key string) error {
+func (c *Client) Delete(ctx context.Context, key string) (err error) {
+	start := time.Now()
+	defer func() { c.record(Event{Op: "delete", Key: key, OK: err == nil, Start: start, End: time.Now(), Err: err}) }()
 	seq := c.nextSeq()
 	for {
 		if err := ctx.Err(); err != nil {
@@ -141,7 +149,11 @@ func (c *Client) Delete(ctx context.Context, key string) error {
 }
 
 // Get reads a value, returning (value, found, error).
-func (c *Client) Get(ctx context.Context, key string) (string, bool, error) {
+func (c *Client) Get(ctx context.Context, key string) (value string, found bool, err error) {
+	start := time.Now()
+	defer func() {
+		c.record(Event{Op: "get", Key: key, Value: value, OK: err == nil, Found: found, Start: start, End: time.Now(), Err: err})
+	}()
 	seq := c.nextSeq()
 	for {
 		if err := ctx.Err(); err != nil {
@@ -180,6 +192,13 @@ func (c *Client) redirect(hint string) {
 		return
 	}
 	c.clearLeader()
+}
+
+// record logs a completed operation if a History recorder is attached.
+func (c *Client) record(e Event) {
+	if c.history != nil {
+		c.history.add(e)
+	}
 }
 
 // String identifies the client in logs.
