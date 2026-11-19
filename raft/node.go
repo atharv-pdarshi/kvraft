@@ -88,8 +88,7 @@ func NewNode(cfg Config) (*Node, error) {
 	n.applyCond = sync.NewCond(&n.mu)
 	n.resetElectionTimer()
 
-	// Stage 2 leaves the node idle (a Follower that never times out). Stage 3
-	// starts the election ticker here; Stage 5 starts the applier.
+	n.run()
 	return n, nil
 }
 
