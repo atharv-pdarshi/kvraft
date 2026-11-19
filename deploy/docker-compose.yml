@@ -1,0 +1,73 @@
+# Five-node KVRaft cluster with fixed membership. Majority is 3, so the cluster
+# tolerates 2 node failures. Each node serves the Raft and KV gRPC services on
+# container port 3000; host ports 8001-8005 map to each node for clients.
+#
+#   cd deploy && docker compose up --build -d
+#   kvctl -peers node1=localhost:8001,...,node5=localhost:8005 status
+
+x-peers: &peers >-
+  node1=10.5.0.11:3000,node2=10.5.0.12:3000,node3=10.5.0.13:3000,node4=10.5.0.14:3000,node5=10.5.0.15:3000
+
+services:
+  node1:
+    build: ..
+    image: kvraft:latest
+    command: ["-id", "node1", "-peers", *peers, "-data", "/data/node1", "-listen", ":3000"]
+    networks:
+      kvnet:
+        ipv4_address: 10.5.0.11
+    ports:
+      - "8001:3000"
+    volumes:
+      - ./data/node1:/data/node1
+
+  node2:
+    image: kvraft:latest
+    command: ["-id", "node2", "-peers", *peers, "-data", "/data/node2", "-listen", ":3000"]
+    networks:
+      kvnet:
+        ipv4_address: 10.5.0.12
+    ports:
+      - "8002:3000"
+    volumes:
+      - ./data/node2:/data/node2
+
+  node3:
+    image: kvraft:latest
+    command: ["-id", "node3", "-peers", *peers, "-data", "/data/node3", "-listen", ":3000"]
+    networks:
+      kvnet:
+        ipv4_address: 10.5.0.13
+    ports:
+      - "8003:3000"
+    volumes:
+      - ./data/node3:/data/node3
+
+  node4:
+    image: kvraft:latest
+    command: ["-id", "node4", "-peers", *peers, "-data", "/data/node4", "-listen", ":3000"]
+    networks:
+      kvnet:
+        ipv4_address: 10.5.0.14
+    ports:
+      - "8004:3000"
+    volumes:
+      - ./data/node4:/data/node4
+
+  node5:
+    image: kvraft:latest
+    command: ["-id", "node5", "-peers", *peers, "-data", "/data/node5", "-listen", ":3000"]
+    networks:
+      kvnet:
+        ipv4_address: 10.5.0.15
+    ports:
+      - "8005:3000"
+    volumes:
+      - ./data/node5:/data/node5
+
+networks:
+  kvnet:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 10.5.0.0/24

@@ -1,0 +1,8 @@
+bin/
+data/
+deploy/data/
+docs/
+.git/
+.github/
+*.md
+scripts/
