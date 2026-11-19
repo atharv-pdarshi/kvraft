@@ -7,6 +7,8 @@ package tests
 import (
 	"bytes"
 	"fmt"
+	"os"
+	"path/filepath"
 	"sync"
 	"testing"
 	"time"
@@ -24,7 +26,11 @@ type Cluster struct {
 
 	net   *transport.Network
 	nodes map[string]*raft.Node
-	store map[string]*storage.Memory
+	store map[string]raft.Storage
+
+	// File-backed mode (used by the torn-write cluster test).
+	fileMode bool
+	dir      string
 
 	electionMin time.Duration
 	electionMax time.Duration
@@ -40,15 +46,26 @@ type Cluster struct {
 	stopReader map[string]chan struct{}
 }
 
-// NewCluster builds and starts n nodes with test-sized timeouts.
+// NewCluster builds and starts n nodes backed by in-memory storage.
 func NewCluster(t *testing.T, n int) *Cluster {
+	return newCluster(t, n, false)
+}
+
+// NewFileCluster builds n nodes backed by real on-disk storage in a temp
+// directory, so a test can corrupt files and restart.
+func NewFileCluster(t *testing.T, n int) *Cluster {
+	return newCluster(t, n, true)
+}
+
+func newCluster(t *testing.T, n int, fileMode bool) *Cluster {
 	t.Helper()
 	c := &Cluster{
 		t:           t,
 		n:           n,
 		net:         transport.NewNetwork(80 * time.Millisecond),
 		nodes:       make(map[string]*raft.Node),
-		store:       make(map[string]*storage.Memory),
+		store:       make(map[string]raft.Storage),
+		fileMode:    fileMode,
 		electionMin: 150 * time.Millisecond,
 		electionMax: 300 * time.Millisecond,
 		heartbeat:   50 * time.Millisecond,
@@ -57,15 +74,58 @@ func NewCluster(t *testing.T, n int) *Cluster {
 		expectNext:  make(map[string]uint64),
 		stopReader:  make(map[string]chan struct{}),
 	}
+	if fileMode {
+		c.dir = t.TempDir()
+	}
 	for i := 0; i < n; i++ {
 		c.ids = append(c.ids, fmt.Sprintf("node%d", i+1))
 	}
 	for _, id := range c.ids {
-		c.store[id] = storage.NewMemory()
+		if !fileMode {
+			c.store[id] = storage.NewMemory()
+		}
 		c.start(id)
 	}
 	t.Cleanup(c.Stop)
 	return c
+}
+
+// storageFor returns the storage a (re)starting node should use: the same
+// in-memory object across restarts, or a freshly-reopened file store that reads
+// whatever is currently on disk.
+func (c *Cluster) storageFor(id string) raft.Storage {
+	if !c.fileMode {
+		return c.store[id]
+	}
+	st, err := storage.NewFile(filepath.Join(c.dir, id))
+	if err != nil {
+		c.t.Fatalf("open file storage for %s: %v", id, err)
+	}
+	c.store[id] = st
+	return st
+}
+
+// logFilePath returns the on-disk log path for node i (file mode only).
+func (c *Cluster) logFilePath(i int) string {
+	return filepath.Join(c.dir, c.ids[i], "log")
+}
+
+// truncateLogTail chops n bytes off node i's on-disk log, simulating a torn
+// final write. The node must be crashed (file handle closed) first.
+func (c *Cluster) truncateLogTail(i, n int) {
+	c.t.Helper()
+	path := c.logFilePath(i)
+	info, err := os.Stat(path)
+	if err != nil {
+		c.t.Fatalf("stat log %s: %v", path, err)
+	}
+	size := info.Size() - int64(n)
+	if size < 0 {
+		size = 0
+	}
+	if err := os.Truncate(path, size); err != nil {
+		c.t.Fatalf("truncate log %s: %v", path, err)
+	}
 }
 
 // peersOf returns every id except self.
@@ -86,7 +146,7 @@ func (c *Cluster) start(id string) {
 		ID:                 id,
 		Peers:              c.peersOf(id),
 		Transport:          c.net,
-		Storage:            c.store[id],
+		Storage:            c.storageFor(id),
 		ElectionTimeoutMin: c.electionMin,
 		ElectionTimeoutMax: c.electionMax,
 		HeartbeatInterval:  c.heartbeat,
@@ -160,6 +220,13 @@ func (c *Cluster) Crash(i int) {
 		node.Stop()
 	}
 	delete(c.nodes, id)
+	// Release the file handle so a restart reopens from disk, as a real
+	// process restart would.
+	if c.fileMode {
+		if st, ok := c.store[id].(*storage.File); ok {
+			st.Close()
+		}
+	}
 }
 
 // Restart builds a new node for i from its retained storage.
@@ -182,6 +249,13 @@ func (c *Cluster) Stop() {
 		node.Stop()
 	}
 	c.nodes = make(map[string]*raft.Node)
+	if c.fileMode {
+		for _, st := range c.store {
+			if f, ok := st.(*storage.File); ok {
+				f.Close()
+			}
+		}
+	}
 }
 
 // Disconnect / Connect / Partition / Heal expose the network controls by index.
