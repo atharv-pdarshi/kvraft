@@ -11,15 +11,19 @@ func TestBasicAgree(t *testing.T) {
 	c := NewCluster(t, 5)
 	_, leader := c.WaitLeader()
 
+	// The leader appends a no-op on election, so client commands start after
+	// it. Record the first index and require the rest to be contiguous.
+	var prev uint64
 	for i := 1; i <= 10; i++ {
 		cmd := []byte(fmt.Sprintf("cmd-%d", i))
 		index, _, ok := leader.Start(cmd)
 		if !ok {
 			t.Fatalf("leader rejected command %d", i)
 		}
-		if index != uint64(i) {
-			t.Fatalf("command %d got index %d, want %d", i, index, i)
+		if i > 1 && index != prev+1 {
+			t.Fatalf("command %d got index %d, want %d", i, index, prev+1)
 		}
+		prev = index
 		got := c.WaitReplicated(index, 5)
 		if string(got) != string(cmd) {
 			t.Fatalf("index %d replicated %q, want %q", index, got, cmd)

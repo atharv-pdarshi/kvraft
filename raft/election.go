@@ -6,12 +6,14 @@ import (
 	"time"
 )
 
-// run launches the node's background goroutines. Stage 3 starts the election
-// ticker (drives elections and leader heartbeats). Stage 5 adds the applier.
+// run launches the node's background goroutines: the election ticker and
+// leader heartbeats, plus the applier that feeds committed entries to the state
+// machine.
 func (n *Node) run() {
-	n.wg.Add(2)
+	n.wg.Add(3)
 	go n.electionTicker()
 	go n.heartbeatTicker()
+	go n.applier()
 }
 
 // rpcTimeout bounds a single outbound RPC. It is longer than the network's
@@ -138,6 +140,14 @@ func (n *Node) becomeLeader() {
 	for _, p := range n.peers {
 		n.nextIndex[p] = last + 1
 		n.matchIndex[p] = 0
+	}
+	// Append a no-op entry in the new term. Committing it (which needs a
+	// current-term majority) transitively commits every earlier entry, so
+	// entries carried over from previous terms become usable right away.
+	noop := LogEntry{Term: n.currentTerm}
+	n.log = append(n.log, noop)
+	if err := n.storage.AppendLog([]LogEntry{noop}); err != nil {
+		n.logger.Printf("WARN append no-op: %v", err)
 	}
 	n.logger.Printf("term %d: became LEADER", n.currentTerm)
 	// Assert leadership immediately rather than waiting for the next tick.

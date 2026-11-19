@@ -116,7 +116,30 @@ func (n *Node) backtrackNext(peer string, reply *AppendEntriesReply) uint64 {
 	return next
 }
 
-// maybeAdvanceCommit recomputes the leader's commit index from matchIndex.
-// Stage 4 only replicates entries, so this is a no-op; Stage 5 implements the
-// majority rule and the current-term check. Caller holds n.mu.
-func (n *Node) maybeAdvanceCommit() {}
+// maybeAdvanceCommit recomputes the leader's commit index: an entry is
+// committed once a majority stores it AND it belongs to the current term. The
+// current-term check is what prevents the Figure 8 scenario from un-committing
+// an entry. Caller holds n.mu.
+func (n *Node) maybeAdvanceCommit() {
+	if n.role != Leader {
+		return
+	}
+	majority := (len(n.peers)+1)/2 + 1
+	for N := n.lastLogIndex(); N > n.commitIndex; N-- {
+		// A leader may only directly commit entries from its own term.
+		if n.log[N].Term != n.currentTerm {
+			continue
+		}
+		count := 1 // the leader stores it itself
+		for _, p := range n.peers {
+			if n.matchIndex[p] >= N {
+				count++
+			}
+		}
+		if count >= majority {
+			n.commitIndex = N
+			n.applyCond.Signal()
+			break
+		}
+	}
+}
