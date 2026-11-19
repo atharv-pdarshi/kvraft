@@ -1,0 +1,85 @@
+syntax = "proto3";
+
+package kvraft;
+
+option go_package = "github.com/atharv-pdarshi/kvraft/proto/kvpb";
+
+// Command is the unit the Raft log carries. It is op-agnostic to Raft itself:
+// the raft package only ever sees the serialized bytes of a Command.
+message Command {
+  enum Op {
+    UNKNOWN = 0;
+    PUT = 1;
+    GET = 2;
+    DELETE = 3;
+  }
+  Op op = 1;
+  string key = 2;
+  string value = 3;
+  // client_id + seq make writes idempotent so a retried Put is applied once.
+  string client_id = 4;
+  uint64 seq = 5;
+}
+
+enum Status {
+  OK = 0;
+  NOT_LEADER = 1;   // retry against leader_hint
+  TIMEOUT = 2;      // index did not commit in time, retry
+  WRONG_LEADER = 3; // a different command landed at our index, retry
+  ERROR = 4;
+}
+
+message PutRequest {
+  string key = 1;
+  string value = 2;
+  string client_id = 3;
+  uint64 seq = 4;
+}
+
+message GetRequest {
+  string key = 1;
+  string client_id = 2;
+  uint64 seq = 3;
+}
+
+message DeleteRequest {
+  string key = 1;
+  string client_id = 2;
+  uint64 seq = 3;
+}
+
+message PutResponse {
+  Status status = 1;
+  string leader_hint = 2;
+}
+
+message GetResponse {
+  Status status = 1;
+  string value = 2;
+  bool found = 3;
+  string leader_hint = 4;
+}
+
+message DeleteResponse {
+  Status status = 1;
+  string leader_hint = 2;
+}
+
+// StatusRequest/Response expose a node's Raft state for `kvctl status`.
+message StatusRequest {}
+
+message StatusResponse {
+  string id = 1;
+  uint64 term = 2;
+  string role = 3;
+  string leader = 4;
+  uint64 commit_index = 5;
+  uint64 last_applied = 6;
+}
+
+service KV {
+  rpc Put(PutRequest) returns (PutResponse);
+  rpc Get(GetRequest) returns (GetResponse);
+  rpc Delete(DeleteRequest) returns (DeleteResponse);
+  rpc GetStatus(StatusRequest) returns (StatusResponse);
+}

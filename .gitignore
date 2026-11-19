@@ -1,0 +1,24 @@
+# Raft on-disk data directories
+data/
+deploy/data/
+
+# Build output
+/bin/
+*.exe
+kvnode
+kvctl
+loadgen
+
+# Go
+*.test
+*.out
+coverage.*
+
+# Editor / tooling
+.claude/
+.idea/
+.vscode/
+*.swp
+
+# OS
+.DS_Store

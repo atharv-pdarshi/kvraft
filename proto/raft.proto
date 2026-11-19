@@ -1,0 +1,45 @@
+syntax = "proto3";
+
+package kvraft;
+
+option go_package = "github.com/atharv-pdarshi/kvraft/proto/raftpb";
+
+// LogEntry mirrors raft.LogEntry on the wire.
+message LogEntry {
+  uint64 term = 1;
+  bytes command = 2;
+}
+
+message RequestVoteArgs {
+  uint64 term = 1;
+  string candidate_id = 2;
+  uint64 last_log_index = 3;
+  uint64 last_log_term = 4;
+}
+
+message RequestVoteReply {
+  uint64 term = 1;
+  bool vote_granted = 2;
+}
+
+message AppendEntriesArgs {
+  uint64 term = 1;
+  string leader_id = 2;
+  uint64 prev_log_index = 3;
+  uint64 prev_log_term = 4;
+  repeated LogEntry entries = 5;
+  uint64 leader_commit = 6;
+}
+
+message AppendEntriesReply {
+  uint64 term = 1;
+  bool success = 2;
+  // Fast-backtracking hints (Figure 2 optimization).
+  uint64 conflict_index = 3;
+  int64 conflict_term = 4; // -1 means "log too short"
+}
+
+service Raft {
+  rpc RequestVote(RequestVoteArgs) returns (RequestVoteReply);
+  rpc AppendEntries(AppendEntriesArgs) returns (AppendEntriesReply);
+}
