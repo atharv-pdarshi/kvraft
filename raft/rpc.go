@@ -47,8 +47,8 @@ func (n *Node) candidateUpToDate(lastLogTerm, lastLogIndex uint64) bool {
 	return lastLogIndex >= myIndex
 }
 
-// AppendEntries is the receiver side of the AppendEntries RPC. Stage 3 handles
-// the term rules and timer reset; the log-matching body arrives in Stage 4.
+// AppendEntries is the receiver side of the AppendEntries RPC (Figure 2),
+// including the fast-backtracking conflict hints.
 func (n *Node) AppendEntries(args *AppendEntriesArgs) *AppendEntriesReply {
 	n.mu.Lock()
 	defer n.mu.Unlock()
@@ -67,8 +67,64 @@ func (n *Node) AppendEntries(args *AppendEntriesArgs) *AppendEntriesReply {
 	n.role = Follower
 	n.leaderID = args.LeaderID
 	n.resetElectionTimer()
-
 	reply.Term = n.currentTerm
+
+	// 2. Reply false if our log is too short to hold prevLogIndex.
+	if args.PrevLogIndex > n.lastLogIndex() {
+		reply.ConflictIndex = n.lastLogIndex() + 1
+		reply.ConflictTerm = -1
+		return reply
+	}
+	// 3. Reply false if the terms at prevLogIndex disagree, and report the
+	//    first index of our conflicting term so the leader can skip it whole.
+	if args.PrevLogIndex >= 1 && n.log[args.PrevLogIndex].Term != args.PrevLogTerm {
+		ct := n.log[args.PrevLogIndex].Term
+		reply.ConflictTerm = int64(ct)
+		ci := args.PrevLogIndex
+		for ci > 1 && n.log[ci-1].Term == ct {
+			ci--
+		}
+		reply.ConflictIndex = ci
+		return reply
+	}
+
+	// 4. prevLog matches. Splice in the new entries, deleting an existing
+	//    suffix only where it actually conflicts — never when it already
+	//    matches, so a delayed old AppendEntries can't erase newer entries.
+	for i := range args.Entries {
+		idx := args.PrevLogIndex + 1 + uint64(i)
+		if idx <= n.lastLogIndex() {
+			if n.log[idx].Term == args.Entries[i].Term {
+				continue // already present and matching
+			}
+			// Conflict: drop this entry and everything after it.
+			n.log = n.log[:idx]
+			if err := n.storage.TruncateSuffix(idx); err != nil {
+				n.logger.Printf("WARN truncate: %v", err)
+			}
+		}
+		rest := append([]LogEntry(nil), args.Entries[i:]...)
+		n.log = append(n.log, rest...)
+		if err := n.storage.AppendLog(rest); err != nil {
+			n.logger.Printf("WARN append log: %v", err)
+		}
+		break
+	}
+
+	// 5. Advance the commit index toward the leader's.
+	if args.LeaderCommit > n.commitIndex {
+		last := args.PrevLogIndex + uint64(len(args.Entries))
+		n.commitIndex = min64(args.LeaderCommit, last)
+		n.applyCond.Signal()
+	}
+
 	reply.Success = true
 	return reply
+}
+
+func min64(a, b uint64) uint64 {
+	if a < b {
+		return a
+	}
+	return b
 }

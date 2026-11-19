@@ -144,42 +144,19 @@ func (n *Node) becomeLeader() {
 	go n.broadcastAppendEntries()
 }
 
-// broadcastAppendEntries sends a heartbeat (Stage 3: empty) to every peer.
-// Stage 4 extends this to carry log entries and handle backtracking.
+// broadcastAppendEntries pushes the log (or a heartbeat) to every peer. Each
+// peer is handled independently by sendAppendEntries, which uses that peer's
+// nextIndex to decide what to send and how far to back up on a mismatch.
 func (n *Node) broadcastAppendEntries() {
 	n.mu.Lock()
 	if n.role != Leader {
 		n.mu.Unlock()
 		return
 	}
-	term := n.currentTerm
-	leaderCommit := n.commitIndex
-	prevLogIndex := n.lastLogIndex()
-	prevLogTerm := n.lastLogTerm()
 	peers := append([]string(nil), n.peers...)
 	n.mu.Unlock()
 
 	for _, peer := range peers {
-		go func(peer string) {
-			args := &AppendEntriesArgs{
-				Term:         term,
-				LeaderID:     n.id,
-				PrevLogIndex: prevLogIndex,
-				PrevLogTerm:  prevLogTerm,
-				Entries:      nil,
-				LeaderCommit: leaderCommit,
-			}
-			ctx, cancel := context.WithTimeout(context.Background(), n.rpcTimeout())
-			defer cancel()
-			reply, err := n.transport.SendAppendEntries(ctx, peer, args)
-			if err != nil {
-				return
-			}
-			n.mu.Lock()
-			defer n.mu.Unlock()
-			if reply.Term > n.currentTerm {
-				n.becomeFollower(reply.Term)
-			}
-		}(peer)
+		go n.sendAppendEntries(peer)
 	}
 }

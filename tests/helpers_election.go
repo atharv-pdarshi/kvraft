@@ -1,6 +1,10 @@
 package tests
 
-import "time"
+import (
+	"time"
+
+	"github.com/atharv-pdarshi/kvraft/raft"
+)
 
 // anyTerm returns the highest currentTerm seen among live nodes.
 func (c *Cluster) anyTerm() uint64 {
@@ -43,6 +47,24 @@ func (c *Cluster) CheckNoLeaderAmong(idx []int) {
 			}
 		}
 	}
+}
+
+// leaderAmong waits for and returns the leader node among the given indices.
+func (c *Cluster) leaderAmong(idx []int) *raft.Node {
+	c.t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		for _, i := range idx {
+			if n := c.nodeOf(i); n != nil {
+				if _, isLeader := n.State(); isLeader {
+					return n
+				}
+			}
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	c.t.Fatalf("no leader among %v within timeout", idx)
+	return nil
 }
 
 // assertAtMostOneLeaderPerTerm checks election safety across live nodes.
